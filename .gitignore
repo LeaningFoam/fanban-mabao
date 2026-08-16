@@ -1,0 +1,31 @@
+# 构建产物
+build/
+dist/
+build_v*/
+dist_v*/
+*.spec.bak
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 运行时数据(隐私,绝不能上传!)
+config.json
+logs/
+profile/
+crash.log
+debug.log
+
+# WebView2 SDK 下载缓存
+webview2_sdk.nupkg
+wv2_versions.json
+wv2sdk/
+
+# IDE / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
