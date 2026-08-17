@@ -84,7 +84,7 @@ class WebViewContainer(QtWebView2Widget):
 
     # ---------------- 页面事件 ----------------
     def _on_core_ready(self, core):
-        """WebView2 核心初始化完成后:挂 URL/标题/新窗口事件。
+        """WebView2 核心初始化完成后:挂 URL/标题/新窗口事件 + 注入取消静音脚本。
 
         注意:这些事件在 .NET 线程触发,这里通过 Qt 信号安全转发到主线程。
         """
@@ -95,6 +95,62 @@ class WebViewContainer(QtWebView2Widget):
             core.NewWindowRequested += self._on_new_window_requested
         except Exception:
             self._log.exception("挂载页面事件失败")
+        self._inject_unmute_script(core)
+
+    def _inject_unmute_script(self, core):
+        """注入"自动取消静音"脚本(官方妈宝 V6 同款方案)。
+
+        背景:Chromium 自动播放策略 —— 没有用户手势的自动播放会被强制静音。
+        软件启动时自动加载的 B 站页面,视频默认静音,用户每次都要手动开声音。
+        官方解法:每个页面创建前注入脚本,监听 <video> 元素出现,
+        一旦发现就取消 muted(不改变播放状态,只恢复声音)。
+        """
+        script = r"""
+        (function() {
+            // 只取消静音,不强行 play:保持页面原有的播放/暂停状态,
+            // 只保证声音不被浏览器自动播放策略静音(用户手动播放时直接有声)。
+            function unmuteVideo(video) {
+                if (video && video.muted) {
+                    video.muted = false;
+                }
+            }
+            function setupObserver() {
+                if (!document.body) return false;
+                var videos = document.querySelectorAll('video');
+                videos.forEach(unmuteVideo);
+                var observer = new MutationObserver(function(mutations) {
+                    mutations.forEach(function(mutation) {
+                        mutation.addedNodes.forEach(function(node) {
+                            if (node.nodeType === 1) {
+                                if (node.tagName === 'VIDEO') {
+                                    unmuteVideo(node);
+                                }
+                                var nested = node.querySelectorAll && node.querySelectorAll('video');
+                                if (nested) {
+                                    nested.forEach(unmuteVideo);
+                                }
+                            }
+                        });
+                    });
+                });
+                observer.observe(document.body, { childList: true, subtree: true });
+                return true;
+            }
+            if (!setupObserver()) {
+                var bodyCheck = setInterval(function() {
+                    if (setupObserver()) clearInterval(bodyCheck);
+                }, 50);
+                setTimeout(function() { clearInterval(bodyCheck); }, 10000);
+            }
+        })();
+        """
+        try:
+            # 官方 V6 同款:AddScriptToExecuteOnDocumentCreatedAsync 在
+            # 每个页面(document)创建时自动注入,无需每次导航重新执行。
+            core.AddScriptToExecuteOnDocumentCreatedAsync(script)
+            self._log.info("已注入自动取消静音脚本(官方同款)")
+        except Exception:
+            self._log.exception("注入取消静音脚本失败")
 
     def _on_new_window_requested(self, sender, args):
         """拦截新窗口请求,在当前窗口导航(官方 V6 同款:lambda u: load_url(u))。"""
